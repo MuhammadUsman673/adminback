@@ -182,31 +182,17 @@ const verifyResetCode = async (req, res) => {
 // @desc    Reset Password
 // @route   POST /api/admin/reset-password
 // @access  Public
+// @desc    Reset Password
+// @route   POST /api/admin/reset-password
+// @access  Public
 const resetPassword = async (req, res) => {
   try {
-    const { resetToken, newPassword, confirmPassword } = req.body;
+    const { email, code, newPassword } = req.body;
 
-    if (!resetToken || !newPassword || !confirmPassword) {
+    if (!email || !code || !newPassword) {
       return res.status(400).json({
         success: false,
-        error: 'Please provide reset token and new password'
-      });
-    }
-
-    // Verify reset token
-    const decoded = verifyToken(resetToken);
-    if (!decoded || decoded.type !== 'reset') {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid or expired reset token'
-      });
-    }
-
-    // Check if passwords match
-    if (newPassword !== confirmPassword) {
-      return res.status(400).json({
-        success: false,
-        error: 'Passwords do not match'
+        error: 'Please provide email, reset code, and new password'
       });
     }
 
@@ -220,12 +206,18 @@ const resetPassword = async (req, res) => {
       });
     }
 
-    // Find admin
-    const admin = await User.findById(decoded.userId);
-    if (!admin || admin.role !== 'admin') {
+    // Find admin with reset code
+    const admin = await User.findOne({ 
+      email, 
+      role: 'admin',
+      resetPasswordCode: code,
+      resetPasswordCodeExpires: { $gt: Date.now() }
+    }).select('+password +resetPasswordCode +resetPasswordCodeExpires');
+
+    if (!admin) {
       return res.status(400).json({
         success: false,
-        error: 'Admin not found'
+        error: 'Invalid or expired reset code'
       });
     }
 
@@ -248,7 +240,6 @@ const resetPassword = async (req, res) => {
     });
   }
 };
-
 // @desc    Get Admin Profile
 // @route   GET /api/admin/profile
 // @access  Private (Admin only)

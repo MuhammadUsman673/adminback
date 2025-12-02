@@ -76,12 +76,20 @@ const validateResetCode = (req, res, next) => {
 };
 
 const validateResetPassword = (req, res, next) => {
-  const { resetToken, newPassword, confirmPassword } = req.body;
+  const { email, code, newPassword } = req.body;
 
   const errors = [];
 
-  if (!resetToken || resetToken.trim() === '') {
-    errors.push('Reset token is required');
+  if (!email || email.trim() === '') {
+    errors.push('Email is required');
+  } else if (!/^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/.test(email)) {
+    errors.push('Please enter a valid email address');
+  }
+
+  if (!code || code.trim() === '') {
+    errors.push('Reset code is required');
+  } else if (!/^\d{6}$/.test(code)) {
+    errors.push('Reset code must be 6 digits');
   }
 
   if (!newPassword || newPassword.trim() === '') {
@@ -91,14 +99,6 @@ const validateResetPassword = (req, res, next) => {
     if (!passwordValidation.isValid) {
       errors.push(...passwordValidation.errors);
     }
-  }
-
-  if (!confirmPassword || confirmPassword.trim() === '') {
-    errors.push('Please confirm your new password');
-  }
-
-  if (newPassword && confirmPassword && newPassword !== confirmPassword) {
-    errors.push('Passwords do not match');
   }
 
   if (errors.length > 0) {
