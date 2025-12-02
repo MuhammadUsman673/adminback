@@ -424,7 +424,368 @@ const logout = (req, res) => {
   });
 };
 
+// ====================================
+// APP USER AUTHENTICATION
+// ====================================
+
+// @desc    Register new app user
+// @route   POST /api/auth/register
+// @access  Public
+const register = async (req, res) => {
+  try {
+    const { name, email, password } = req.body;
+
+    // Validate input
+    if (!name || !email || !password) {
+      return res.status(400).json({
+        success: false,
+        error: 'Please provide name, email, and password'
+      });
+    }
+
+    // Validate password strength
+    const passwordValidation = validatePasswordStrength(password);
+    if (!passwordValidation.isValid) {
+      return res.status(400).json({
+        success: false,
+        error: 'Password validation failed',
+        details: passwordValidation.errors
+      });
+    }
+
+    // Check if user already exists
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        error: 'User with this email already exists'
+      });
+    }
+
+    // Generate verification code
+    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+
+    // Create new user
+    const user = await User.create({
+      name,
+      email,
+      password,
+      role: 'user',
+      isVerified: false,
+      verificationCode,
+      verificationCodeExpires: Date.now() + 24 * 60 * 60 * 1000, // 24 hours
+      status: 'pending'
+    });
+
+    // Send verification email
+    const emailResult = await sendVerificationEmail(email, verificationCode);
+
+    if (!emailResult.success) {
+      // If email fails, still create user but notify
+      return res.status(201).json({
+        success: true,
+        message: 'Registration successful but verification email failed. Please contact support.',
+        userId: user._id
+      });
+    }
+
+    res.status(201).json({
+      success: true,
+      message: 'Registration successful! Please check your email for verification code.',
+      userId: user._id,
+      // In development, you might want to return the code for testing
+      // verificationCode: process.env.NODE_ENV === 'development' ? verificationCode : undefined
+    });
+
+  } catch (error) {
+    console.error('Registration error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Server error during registration'
+    });
+  }
+};
+
+
+// @desc    Verify email with code
+// @route   POST /api/auth/verify-email
+// @access  Public
+const verifyEmail = async (req, res) => {
+  try {
+    const { email, code } = req.body;
+
+    // Validate input
+    if (!email || !code) {
+      return res.status(400).json({
+        success: false,
+        error: 'Please provide email and verification code'
+      });
+    }
+
+    // Find user with verification code
+    const user = await User.findOne({ 
+      email,
+      role: 'user',
+      verificationCode: code,
+      verificationCodeExpires: { $gt: Date.now() }
+    }).select('+verificationCode +verificationCodeExpires');
+
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid or expired verification code'
+      });
+    }
+
+    // Check if already verified
+    if (user.isVerified) {
+      return res.status(400).json({
+        success: false,
+        error: 'Email is already verified. Please login.'
+      });
+    }
+
+    // Mark user as verified
+    user.isVerified = true;
+    user.status = 'active';
+    user.verificationCode = undefined;
+    user.verificationCodeExpires = undefined;
+    await user.save();
+
+    // Generate token for immediate login
+    const token = generateToken(user._id, user.role);
+
+    // Return user data
+    const userData = {
+      id: user._id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      avatar: user.avatar,
+      isVerified: user.isVerified
+    };
+
+    res.status(200).json({
+      success: true,
+      message: 'Email verified successfully! You are now logged in.',
+      token,
+      user: userData
+    });
+
+  } catch (error) {
+    console.error('Verify email error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Server error during email verification'
+    });
+  }
+};
+// @desc    Login app user
+// @route   POST /api/auth/login
+// @access  Public
+const loginUser = async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    // Validate input
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        error: 'Please provide email and password'
+      });
+    }
+
+    // Find user (role must be 'user')
+    const user = await User.findOne({ email, role: 'user' }).select('+password');
+    
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        error: 'Invalid credentials'
+      });
+    }
+
+    // Check if user is verified
+    if (!user.isVerified) {
+      return res.status(403).json({
+        success: false,
+        error: 'Please verify your email before logging in',
+        requiresVerification: true
+      });
+    }
+
+    // Check if user is active
+    if (user.status !== 'active') {
+      return res.status(403).json({
+        success: false,
+        error: 'Account is suspended. Please contact support.'
+      });
+    }
+
+    // Check password
+    const isPasswordValid = await user.comparePassword(password);
+    if (!isPasswordValid) {
+      return res.status(401).json({
+        success: false,
+        error: 'Invalid credentials'
+      });
+    }
+
+    // Update last login
+    await user.updateLastLogin();
+
+    // Generate token
+    const token = generateToken(user._id, user.role);
+
+    // Return response (without password)
+    const userData = {
+      id: user._id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      avatar: user.avatar,
+      isVerified: user.isVerified,
+      lastLogin: user.lastLogin
+    };
+
+    res.status(200).json({
+      success: true,
+      message: 'Login successful',
+      token,
+      user: userData
+    });
+
+  } catch (error) {
+    console.error('User login error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Server error during login'
+    });
+  }
+};
+// @desc    Forgot Password - Send reset code (for app users)
+// @route   POST /api/auth/forgot-password
+// @access  Public
+const forgotPasswordUser = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        error: 'Please provide email address'
+      });
+    }
+
+    // Find user by email (role must be 'user')
+    const user = await User.findOne({ email, role: 'user' });
+    
+    if (!user) {
+      // For security, don't reveal if user exists or not
+      return res.status(200).json({
+        success: true,
+        message: 'If an account exists with this email, a reset code will be sent'
+      });
+    }
+
+    // Check if user is verified
+    if (!user.isVerified) {
+      return res.status(403).json({
+        success: false,
+        error: 'Please verify your email first',
+        requiresVerification: true
+      });
+    }
+
+    // Generate reset code
+    const resetCode = user.generateResetCode();
+    await user.save();
+
+    // Send reset code via email
+    const emailResult = await sendPasswordResetEmail(email, resetCode);
+
+    if (!emailResult.success) {
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to send reset email. Please try again.'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Password reset code sent to your email',
+      // In development, you might want to return the code for testing
+      // code: process.env.NODE_ENV === 'development' ? resetCode : undefined
+    });
+
+  } catch (error) {
+    console.error('Forgot password user error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Server error during password reset'
+    });
+  }
+};
+// @desc    Reset Password (for app users)
+// @route   POST /api/auth/reset-password
+// @access  Public
+const resetPasswordUser = async (req, res) => {
+  try {
+    const { email, code, newPassword } = req.body;
+
+    if (!email || !code || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        error: 'Please provide email, reset code, and new password'
+      });
+    }
+
+    // Validate password strength
+    const passwordValidation = validatePasswordStrength(newPassword);
+    if (!passwordValidation.isValid) {
+      return res.status(400).json({
+        success: false,
+        error: 'Password validation failed',
+        details: passwordValidation.errors
+      });
+    }
+
+    // Find user with reset code (role must be 'user')
+    const user = await User.findOne({ 
+      email, 
+      role: 'user',
+      resetPasswordCode: code,
+      resetPasswordCodeExpires: { $gt: Date.now() }
+    }).select('+password +resetPasswordCode +resetPasswordCodeExpires');
+
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid or expired reset code'
+      });
+    }
+
+    // Update password
+    user.password = newPassword;
+    user.resetPasswordCode = undefined;
+    user.resetPasswordCodeExpires = undefined;
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Password reset successful. You can now login with your new password.'
+    });
+
+  } catch (error) {
+    console.error('Reset password user error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Server error during password reset'
+    });
+  }
+};
 module.exports = {
+  // Admin functions
   adminLogin,
   forgotPassword,
   verifyResetCode,
@@ -432,5 +793,12 @@ module.exports = {
   getAdminProfile,
   updateAdminProfile,
   changePassword,
-  logout
+  logout,
+  
+  // App user functions
+  register,
+  verifyEmail,
+  loginUser,
+  forgotPasswordUser,
+  resetPasswordUser
 };
