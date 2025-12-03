@@ -7,14 +7,7 @@ const connectDB = require('./config/database');
 // Import routes
 const authRoutes = require('./routes/auth');
 const dashboardRoutes = require('./routes/dashboard');
-// Other routes will be added as we create them
-// const adminRoutes = require('./routes/admin');
-// const userRoutes = require('./routes/users');
-// const coachRoutes = require('./routes/coaches');
-// const recipeRoutes = require('./routes/recipes');
-// const exerciseRoutes = require('./routes/exercises');
-// const paymentRoutes = require('./routes/payments');
-// const supportRoutes = require('./routes/support');
+const userRoutes = require('./routes/users'); // ADDED
 
 // Initialize express app
 const app = express();
@@ -39,15 +32,7 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 // API Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/admin/dashboard', dashboardRoutes);
-
-// Other API routes will be added here as we create them
-// app.use('/api/admin', adminRoutes);
-// app.use('/api/users', userRoutes);
-// app.use('/api/coaches', coachRoutes);
-// app.use('/api/recipes', recipeRoutes);
-// app.use('/api/exercises', exerciseRoutes);
-// app.use('/api/payments', paymentRoutes);
-// app.use('/api/support', supportRoutes);
+app.use('/api/admin/users', userRoutes); // ADDED
 
 // Health check route
 app.get('/api/health', (req, res) => {
