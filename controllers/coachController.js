@@ -1,85 +1,120 @@
-// backend/controllers/coachController.js → FINAL VERSION (FULLY WORKING)
+// backend/controllers/coachController.js
 const Coach = require('../models/Coach');
 const ClientAssignment = require('../models/ClientAssignment');
 const User = require('../models/User');
 
-// GET ALL COACHES WITH CLIENT COUNT + PAGINATION + SEARCH
+// @desc    Get all coaches with pagination, search, and client count
+// @route   GET /api/admin/coaches
+// @access  Private (Admin)
 const getAllCoaches = async (req, res) => {
   try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
-    const search = req.query.search?.trim() || '';
+    const { page = 1, limit = 10, search = '' } = req.query;
 
-    // Build search query
-    const searchQuery = search
-      ? {
-          $or: [
-            { name: { $regex: search, $options: 'i' } },
-            { email: { $regex: search, $options: 'i' } }
-          ]
-        }
-      : {};
+    // Build query
+    const query = {};
 
-    const [coaches, total] = await Promise.all([
-      Coach.find(searchQuery)
-        .select('name email tags phone experience status joinedDate')
-        .sort({ joinedDate: -1 })
-        .skip((page - 1) * limit)
-        .limit(limit),
-      Coach.countDocuments(searchQuery)
-    ]);
+    // Search by name or email
+    if (search) {
+      query.$or = [
+        { name: { $regex: search, $options: 'i' } },
+        { email: { $regex: search, $options: 'i' } }
+      ];
+    }
 
-    // Add client count to each coach
-    const coachesWithStats = await Promise.all(
+    // Calculate pagination
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    // Get total count
+    const totalCoaches = await Coach.countDocuments(query);
+
+    // Get coaches
+    const coaches = await Coach.find(query)
+      .select('-password')
+      .sort({ createdAt: -1 })
+      .limit(parseInt(limit))
+      .skip(skip);
+
+    // Get client count for each coach
+    const coachesWithClientCount = await Promise.all(
       coaches.map(async (coach) => {
-        const clientCount = await ClientAssignment.countDocuments({ coachId: coach._id });
+        const clientCount = await ClientAssignment.countDocuments({
+          coachId: coach._id
+        });
+
         return {
-          ...coach.toObject(),
+          _id: coach._id,
+          name: coach.name,
+          email: coach.email,
+          phone: coach.phone,
+          experience: coach.experience,
+          certifications: coach.certifications,
+          tags: coach.tags,
+          status: coach.status,
+          joinedDate: coach.joinedDate || coach.createdAt,
+          createdAt: coach.createdAt,
           clientCount
         };
       })
     );
 
-    res.json({
+    // Calculate pagination info
+    const totalPages = Math.ceil(totalCoaches / parseInt(limit));
+
+    res.status(200).json({
       success: true,
-      coaches: coachesWithStats,
+      coaches: coachesWithClientCount,
       pagination: {
-        currentPage: page,
-        totalPages: Math.ceil(total / limit),
-        totalCoaches: total
+        currentPage: parseInt(page),
+        totalPages,
+        totalCoaches,
+        limit: parseInt(limit),
+        hasNextPage: parseInt(page) < totalPages,
+        hasPrevPage: parseInt(page) > 1
       }
     });
+
   } catch (error) {
     console.error('Get all coaches error:', error);
-    res.status(500).json({ success: false, error: 'Server error' });
+    res.status(500).json({
+      success: false,
+      error: 'Server error fetching coaches'
+    });
   }
 };
 
-// GET SINGLE COACH (unchanged)
+// @desc    Get single coach details
+// @route   GET /api/admin/coaches/:coachId
+// @access  Private (Admin)
 const getCoachById = async (req, res) => {
   try {
     const coach = await Coach.findById(req.params.coachId)
-      .select('name email avatar tags joinedDate');
+      .select('name email avatar tags joinedDate createdAt');
 
     if (!coach) {
       return res.status(404).json({ success: false, error: 'Coach not found' });
     }
 
-    const activeClients = await ClientAssignment.countDocuments({ coachId: coach._id });
+    // Count active clients
+    const activeClients = await ClientAssignment.countDocuments({
+      coachId: coach._id
+    });
 
-    res.json({
+    res.status(200).json({
       success: true,
       coach: {
-        ...coach.toObject(),
+        ...coach._doc,
         activeClients
       }
     });
   } catch (error) {
+    console.error('Get coach error:', error);
     res.status(500).json({ success: false, error: 'Server error' });
   }
 };
 
-// GET CLIENTS OF A COACH (unchanged - already perfect)
+// @desc    Get clients of a specific coach (with search & pagination)
+// @route   GET /api/admin/coaches/:coachId/clients
+// @access  Private (Admin)
 const getCoachClients = async (req, res) => {
   try {
     const { coachId } = req.params;
@@ -87,6 +122,7 @@ const getCoachClients = async (req, res) => {
 
     const query = { coachId };
 
+    // Search in user's name/email
     if (search) {
       const users = await User.find({
         $or: [
@@ -121,7 +157,7 @@ const getCoachClients = async (req, res) => {
       joinDate: c.assignedAt.toISOString().split('T')[0]
     }));
 
-    res.json({
+    res.status(200).json({
       success: true,
       clients: formattedClients,
       pagination: {
@@ -136,17 +172,83 @@ const getCoachClients = async (req, res) => {
   }
 };
 
-// ASSIGN & REMOVE CLIENT (unchanged - already perfect)
+// @desc    Assign client to coach
+// @route   POST /api/admin/coaches/:coachId/assign-client
+// @access  Private (Admin)
 const assignClientToCoach = async (req, res) => {
-  // ... your existing perfect code
+  try {
+    const { coachId } = req.params;
+    const { userId, subscription = 'Basic', paymentStatus = 'Pending' } = req.body;
+
+    // Validate coach exists
+    const coach = await Coach.findById(coachId);
+    if (!coach) return res.status(404).json({ success: false, error: 'Coach not found' });
+
+    // Validate user exists and is a normal user
+    const user = await User.findById(userId);
+    if (!user || user.role !== 'user') {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+
+    // Check if already assigned
+    const existing = await ClientAssignment.findOne({ userId });
+    if (existing) {
+      return res.status(400).json({ success: false, error: 'User already assigned to a coach' });
+    }
+
+    const assignment = await ClientAssignment.create({
+      userId,
+      coachId,
+      subscription,
+      paymentStatus
+    });
+
+    await assignment.populate('userId', 'name email avatar');
+
+    res.status(201).json({
+      success: true,
+      message: 'Client assigned successfully',
+      client: {
+        _id: assignment._id,
+        name: assignment.userId.name,
+        email: assignment.userId.email,
+        avatar: assignment.userId.avatar?.slice(0, 2).toUpperCase() || 'NA',
+        subscription,
+        paymentStatus,
+        joinDate: assignment.assignedAt.toISOString().split('T')[0]
+      }
+    });
+  } catch (error) {
+    console.error('Assign client error:', error);
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
 };
 
+// @desc    Remove client from coach
+// @route   DELETE /api/admin/coaches/:coachId/clients/:userId
+// @access  Private (Admin)
 const removeClientFromCoach = async (req, res) => {
-  // ... your existing perfect code
+  try {
+    const { userId } = req.params;
+
+    const assignment = await ClientAssignment.findOneAndDelete({ userId });
+
+    if (!assignment) {
+      return res.status(404).json({ success: false, error: 'Assignment not found' });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Client removed from coach successfully'
+    });
+  } catch (error) {
+    console.error('Remove client error:', error);
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
 };
 
 module.exports = {
-  getAllCoaches,           // ← Now with client count + pagination + search
+  getAllCoaches,
   getCoachById,
   getCoachClients,
   assignClientToCoach,
