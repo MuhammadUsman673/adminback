@@ -7,7 +7,8 @@ const connectDB = require('./config/database');
 // Import routes
 const authRoutes = require('./routes/auth');
 const dashboardRoutes = require('./routes/dashboard');
-const userRoutes = require('./routes/users'); // ADDED
+const userRoutes = require('./routes/users');      // ← Already added
+const coachRoutes = require('./routes/coaches');    // ← NEW: Coach routes
 
 // Initialize express app
 const app = express();
@@ -32,7 +33,8 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 // API Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/admin/dashboard', dashboardRoutes);
-app.use('/api/admin/users', userRoutes); // ADDED
+app.use('/api/admin/users', userRoutes);        // ← Users management
+app.use('/api/admin/coaches', coachRoutes);     // ← COACH & CLIENT ASSIGNMENT APIs
 
 // Health check route
 app.get('/api/health', (req, res) => {
@@ -51,7 +53,9 @@ app.get('/', (req, res) => {
     version: '1.0.0',
     endpoints: {
       auth: '/api/auth',
-      admin: '/api/admin',
+      dashboard: '/api/admin/dashboard',
+      users: '/api/admin/users',
+      coaches: '/api/admin/coaches',    // ← New endpoint
       health: '/api/health'
     }
   });
@@ -84,8 +88,9 @@ const PORT = process.env.PORT || 5000;
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`🚀 Server running in ${process.env.NODE_ENV || 'development'} mode`);
-  console.log(`📡 Port: ${PORT}`);
-  console.log(`🔗 Health check: http://localhost:${PORT}/api/health`);
-  console.log(`🔗 API Base URL: http://localhost:${PORT}/api`);
+  console.log(`Server running in ${process.env.NODE_ENV || 'development'} mode`);
+  console.log(`Port: ${PORT}`);
+  console.log(`Health check: http://localhost:${PORT}/api/health`);
+  console.log(`API Base URL: http://localhost:${PORT}/api`);
+  console.log(`Coach APIs ready → /api/admin/coaches`);
 });
