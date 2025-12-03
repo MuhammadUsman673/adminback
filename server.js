@@ -6,6 +6,7 @@ const connectDB = require('./config/database');
 
 // Import routes
 const authRoutes = require('./routes/auth');
+const dashboardRoutes = require('./routes/dashboard');
 // Other routes will be added as we create them
 // const adminRoutes = require('./routes/admin');
 // const userRoutes = require('./routes/users');
@@ -37,6 +38,7 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // API Routes
 app.use('/api/auth', authRoutes);
+app.use('/api/admin/dashboard', dashboardRoutes);
 
 // Other API routes will be added here as we create them
 // app.use('/api/admin', adminRoutes);
